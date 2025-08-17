@@ -462,6 +462,20 @@ Before assigning to 'answer', always convert numpy/pandas types:
 - Use int()/float() for pandas types: answer = int(result) or float(result)
 - Example: answer = float(my_pandas_result) instead of answer = my_pandas_result
 
+CRITICAL API USAGE:
+- ONLY use standard library functions and their documented parameters
+- If unsure about a function's parameters, use default values or basic syntax
+- Do not invent parameter names - stick to commonly known ones
+- When using any library function, use the most basic, standard syntax first
+- Always handle API errors gracefully with try-except blocks
+- Example: Use obj.fit(data) instead of obj.fit(data, unknown_param=value)
+
+ERROR PREVENTION:
+- Never use parameters you're not 100% certain exist
+- Start with minimal function calls, add parameters only if needed
+- Use help() or basic examples for complex functions
+- If a function fails, try simpler alternatives or default parameters
+
 OUTPUT FORMAT:
 - Return ONLY the Python code, no explanations
 - Code should be ready to execute
