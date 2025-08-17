@@ -1,0 +1,89 @@
+# pyproject.toml
+[project]
+name = "data-analyst-agent"
+version = "1.0.0"
+description = "AI-powered data analysis agent with geospatial support"
+requires-python = ">=3.9"
+
+dependencies = [
+    # Core FastAPI and web
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-multipart>=0.0.6",
+    "aiohttp>=3.8.0",
+    "requests>=2.31.0",
+    
+    # AI and LLM
+    "google-generativeai>=0.3.0",
+    "openai",
+    
+    # Core data science
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    
+    # Visualization
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "plotly>=5.15.0",
+    
+    # Image processing
+    "pillow>=10.0.0",
+    "pytesseract>=0.3.10",  # OCR for images
+    
+    # PDF processing (multiple strategies)
+    "pdfplumber>=0.9.0",
+    "pypdf2>=3.0.0",
+    "camelot-py[cv]>=0.10.0",  # Advanced PDF table extraction
+    "tabula-py>=2.7.0",       # Java-based PDF table extraction
+    
+    # Document processing
+    "python-docx>=0.8.11",
+    "openpyxl>=3.1.0",
+    
+    # Geospatial libraries
+    "geopandas>=0.13.0",     # Main geospatial data manipulation
+    "shapely>=2.0.0",        # Geometric operations
+    "folium>=0.14.0",        # Interactive maps
+    "geopy>=2.3.0",          # Geocoding and distance calculations
+    "contextily>=1.4.0",     # Basemap tiles for matplotlib
+    "pyproj>=3.5.0",         # Coordinate reference systems
+    "fiona>=1.9.0",          # Geospatial file I/O
+    
+    # Machine learning
+    "scikit-learn>=1.3.0",
+    "statsmodels>=0.14.0",
+    
+    # File format support
+    "pyarrow>=12.0.0",       # Parquet files
+    "fastparquet>=0.8.0",    # Alternative parquet reader
+    
+    # Text processing
+    "nltk>=3.8.0",
+    "textblob>=0.17.0",
+    
+    # Web scraping support
+    "beautifulsoup4>=4.12.0",
+    "selectolax",
+    
+    # Network analysis
+    "networkx>=3.0",
+    
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "async-timeout>=4.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "httpx>=0.25.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["data-analyst-agent"]
