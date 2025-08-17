@@ -786,43 +786,38 @@ class DataAnalystAgent:
         self.formatting_model = genai.GenerativeModel('gemini-1.5-flash')
     
     def _extract_images(self, answer: Any, start_counter: int = 1) -> Tuple[Any, Dict[str, str]]:
+        
         """Extract base64 images and replace with placeholders"""
-        if not isinstance(answer, str):
-            return answer, {}
-        
         images = {}
-        processed_answer = answer
-        
-        # Pattern to match base64 images (with or without data URI prefix)
-        patterns = [
-            r'data:image/[^;]+;base64,([A-Za-z0-9+/=]+)',  # With data URI
-            r'\b([A-Za-z0-9+/]{100,}={0,2})\b'  # Raw base64 (100+ chars, might end with =)
-        ]
-        
         image_counter = start_counter
-        for pattern in patterns:
-            matches = re.finditer(pattern, processed_answer)
-            for match in matches:
-                if pattern.startswith('data:image'):
-                    # Extract just the base64 part (group 1)
-                    base64_data = match.group(1)
-                    full_match = match.group(0)
-                else:
-                    # Raw base64 pattern
-                    base64_data = match.group(1)
-                    full_match = match.group(0)
-                    
-                    # Validate it's likely a real base64 image (heuristic)
-                    if len(base64_data) < 500:  # Too short for image
-                        continue
-                
-                placeholder = f"{{{{IMAGE_{image_counter}}}}}"
-                images[placeholder] = base64_data
-                processed_answer = processed_answer.replace(full_match, placeholder, 1)
-                image_counter += 1
         
+        def process_value(value):
+            nonlocal image_counter
+            if isinstance(value, str):
+                # Pattern to match data URI images
+                pattern = r'data:image/[^;]+;base64,([A-Za-z0-9+/=]+)'
+                matches = list(re.finditer(pattern, value))
+                
+                processed_value = value
+                for match in matches:
+                    base64_data = match.group(1)
+                    full_match = match.group(0)
+                    placeholder = f"{{{{IMAGE_{image_counter}}}}}"
+                    images[placeholder] = base64_data
+                    processed_value = processed_value.replace(full_match, placeholder, 1)
+                    image_counter += 1
+                
+                return processed_value
+            elif isinstance(value, dict):
+                return {k: process_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [process_value(item) for item in value]
+            else:
+                return value
+        
+        processed_answer = process_value(answer)
         return processed_answer, images
-
+    
     def _restore_images(self, formatted_response: Any, image_map: Dict[str, str]) -> Any:
         """Restore base64 images from placeholders"""
         if not isinstance(formatted_response, str) or not image_map:
@@ -859,6 +854,7 @@ CRITICAL JSON FORMATTING RULES:
 1. Return ONLY valid, complete JSON - no extra text before or after
 2. Ensure all JSON braces/brackets are properly matched
 3. Do not include explanations, comments, or additional content outside the JSON
+4. Make sure your json response can be extracted by using json.loads(response) on the backend
 
 RESPONSE FORMAT:
 - Return answers in the same order as questions
@@ -885,7 +881,7 @@ Give only the formatted response, no explanations or additional text."""
                     f"{system_prompt}\n\n{user_prompt}",
                     generation_config=genai.types.GenerationConfig(
                         temperature=0.1,  # Low temperature for consistent formatting
-                        max_output_tokens=8192,
+                        max_output_tokens=65536,
                     )
                 )
             )
@@ -903,10 +899,9 @@ Give only the formatted response, no explanations or additional text."""
         """Format the final response using LLM with image placeholder handling"""
         try:
             # Handle single scraper response vs list of answers
-            if not isinstance(raw_answers, list):
-                # Single response from scraper - treat as single answer
-                processed_answers = [raw_answers]
-            else:
+            # Single response from scraper - treat as single answer
+            processed_answers = [raw_answers]
+            """else:
                 # Original list of answers from individual question processing
                 processed_answers = []
                 all_images = {}
@@ -961,40 +956,48 @@ Give only the formatted response, no explanations or additional text."""
                         except json.JSONDecodeError as e:
                             print(f"⚠️ JSON parsing failed: {e}")
 
-                return final_response
+                return final_response"""
             
             # For single scraper response, extract images and process
             all_images = {}
             processed_answer, images = self._extract_images(processed_answers[0])
             processed_answers = [processed_answer]
             all_images.update(images)
-            
+
             print(f"🖼️ Extracted {len(all_images)} images for formatting")
-            
+
             # Call formatting LLM
             formatted_response = await self._call_formatting_llm(questions_content, processed_answers)
-            
+
             # Restore images in formatted response
-            final_response = self._restore_images(formatted_response, all_images)
+            final_response = formatted_response
+
             if isinstance(final_response, str):
-                    if final_response.startswith("```json"):
-                        final_response = final_response[len("```json\n"):]
-                    if final_response.endswith("```"):
-                        final_response = final_response[:-3]
-                    final_response = final_response.strip()
-                    final_response=final_response.replace("\n", "")
-                    if final_response.startswith('"') and final_response.endswith('"'):
-                        try:
-                            # Remove outer quotes and unescape
-                            final_response = json.loads(final_response)
-                        except json.JSONDecodeError:
-                            pass
-                    # Only parse if it looks like JSON and handle parsing errors
-                    if final_response.startswith(('{', '[')):
-                        try:
-                            final_response = json.loads(final_response)
-                        except json.JSONDecodeError as e:
-                            print(f"⚠️ JSON parsing failed: {e}")
+                if final_response.startswith("```json"):
+                    final_response = final_response[len("```json\n"):]
+                if final_response.endswith("```"):
+                    final_response = final_response[:-3]
+                
+                final_response = final_response.strip()
+                
+                # Restore images BEFORE JSON parsing
+                final_response = self._restore_images(final_response, all_images)
+                
+                # Only parse if it looks like JSON and handle parsing errors
+                if final_response.startswith(('{', '[')):
+                    try:
+                        final_response = json.loads(final_response)
+                    except json.JSONDecodeError as e:
+                        print(f"⚠️ JSON parsing failed: {e}")
+                        pass
+                elif final_response.startswith('"') and final_response.endswith('"'):
+                    # For quoted strings, use json.loads to handle escaping properly
+                    try:
+                        final_response = json.loads(final_response)
+                    except json.JSONDecodeError as e:
+                        print(f"⚠️ JSON parsing failed: {e}")
+                        # Remove quotes manually as fallback
+                        final_response = final_response[1:-1]
 
             return final_response
             
@@ -1018,7 +1021,7 @@ Give only the formatted response, no explanations or additional text."""
             try:
                 scraper_response = await self.scraper_client.scrape_with_questions(questions_content)
                 print("✅ Scraping completed, returning response...")
-                return scraper_response
+                return await self.format_scraper_response(questions_content, scraper_response)
                 
             except Exception as e:
                 print(f"❌ Scraping failed: {e}")
@@ -1196,6 +1199,21 @@ Give only the formatted response, no explanations or additional text."""
                 context_lines.append(f"   ❌ Preview generation failed: {str(e)}")
         
         return '\n'.join(context_lines)
+    
+    async def format_scraper_response(self, questions_content: str, scraper_response: Dict[str, Any]) -> Any:
+        """Format scraper response using the existing formatting pipeline"""
+       
+        
+        try:
+            # Extract the actual analysis from scraper response structure
+            raw_result = scraper_response.get('result', {}).get('results', {})
+            
+            # Use existing format_final_response (it handles image extraction internally)
+            return await self.format_final_response(questions_content, raw_result)
+            
+        except Exception as e:
+            print(f"⚠️ Scraper response formatting failed: {e}")
+            return scraper_response
 
 
 # FastAPI Application
