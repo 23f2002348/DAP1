@@ -411,6 +411,7 @@ CRITICAL REQUIREMENTS:
 8. Handle missing files/data gracefully
 9. Use absolute file paths provided in the context
 10. ALWAYS convert numpy/pandas types to native Python types before assigning to 'answer'
+11. MAKE SURE 'answer' is strictly a JSON object unless specified otherwise in the questions.txt.
 
 GEOSPATIAL ANALYSIS:
 - Use geopandas for spatial data manipulation: gpd.read_file(), gpd.GeoDataFrame()
@@ -498,7 +499,7 @@ OUTPUT FORMAT:
 - Code should be ready to execute
 - Last line should assign result to variable 'answer'
 - For images: assign ONLY the raw base64 string to 'answer'
--Unless explicitly mentioned in questions.txt, return the final response as a JSON object with the key 'answer'.
+-Unless explicitly mentioned in questions.txt, return the final response strictly as a JSON object with the key 'answer'.
 -Make sure the answers (value of keys) to the questions are formatted as per the requirements in the questions.txt file."""
 
     @staticmethod
@@ -627,10 +628,11 @@ try:
         answer = answer.tolist()
     elif hasattr(answer, 'to_dict'):  # pandas objects
         answer = answer.to_dict()
-        
     print("RESULT_START")
-    print(answer)  # Print the object directly, not as JSON string
-    
+    if isinstance(answer, (dict, list)):
+        print(json.dumps(answer))  # Keep this for proper JSON formatting
+    else:
+        print(json.dumps(answer))
     print("RESULT_END")
     
 except Exception as e:
@@ -675,6 +677,9 @@ except Exception as e:
                 
                 try:
                     result = json.loads(result_json)
+                    # If result is a string that looks like JSON, parse it again
+                    if isinstance(result, str) and result.strip().startswith(('{', '[')):
+                        result = json.loads(result)
                     return QuestionResult(
                         question_number=0,
                         question_text="",
@@ -688,7 +693,7 @@ except Exception as e:
                         question_text="",
                         result=result_json,
                         success=True
-                    )
+    )
             
             elif "ERROR_START" in output and "ERROR_END" in output:
                 error_start = output.find("ERROR_START") + len("ERROR_START\n")
