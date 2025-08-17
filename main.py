@@ -43,6 +43,19 @@ class ScraperClient:
     """Simplified scraper client using only 8000 route"""
     
     @staticmethod
+    async def wake_up_scraper() -> None:
+        """Send minimal request to wake up the scraper service"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = aiohttp.FormData()
+                data.add_field('questions_txt', 'wake up', filename='questions.txt', content_type='text/plain')
+                
+                async with session.post("https://scrp-vrz3.onrender.com/api/", data=data, timeout=10) as response:
+                    print(f"🔄 Scraper wake-up: {response.status}")
+        except Exception as e:
+            print(f"🔄 Scraper wake-up failed (non-critical): {e}")
+    
+    @staticmethod
     async def scrape_with_questions(questions_content: str) -> Dict[str, Any]:
         """Call scraper API with questions.txt content and return structured response"""
         async with aiohttp.ClientSession() as session:
@@ -393,7 +406,7 @@ CRITICAL REQUIREMENTS:
 3. Use standard libraries: pandas, numpy, matplotlib, PIL, json, base64, io, PyPDF2, pdfplumber, docx
 4. GEOSPATIAL LIBRARIES: geopandas, shapely, folium, geopy for location-based analysis
 5. Never use input() or interactive functions
-6. Save plots to BytesIO, convert to base64 with format: "data:image/png;base64,..."
+6. Save plots to BytesIO, convert to base64 as raw string (no data URI prefix)
 7. Keep plots under 100KB when possible
 8. Handle missing files/data gracefully
 9. Use absolute file paths provided in the context
@@ -415,6 +428,7 @@ IMAGE COMPRESSION:
   * For PIL images: resize with image.resize((new_width, new_height), Image.LANCZOS)
   * Compress JPEG quality: image.save(buffer, format='JPEG', quality=60-80, optimize=True)
   * Convert PNG to JPEG if size reduction needed: image.convert('RGB').save()
+  * Make sure that only the final base64 encoded string is printed in response (remove the "data:image/png;base64," part).
 
 PDF PROCESSING:
 - First analyze PDF structure with: 
@@ -436,6 +450,7 @@ IMAGE PROCESSING WITH OCR:
 - Use PIL for image operations: PIL.Image.open(filepath)
 - For text extraction from images: import pytesseract; text = pytesseract.image_to_string(image)
 - For table extraction from images: try pytesseract with table-specific config
+- If any extraction fails or produces null or unknown results, manually answer the questions asked on the image or manually append the context of image as required to answer the questions set provided.
 - Handle different image formats (PNG, JPG, GIF, etc.)
 - Convert images to base64 with proper data URI format
 
@@ -454,6 +469,7 @@ JSON/PARQUET PROCESSING:
 CRITICAL VISUALIZATION RULE:
 Strictly match ALL plot or image visualization requirements as described in questions, including colors, font_size, axis labels, plot titles, legends, formats, graph types. For geospatial visualizations, use folium for interactive maps or matplotlib/contextily for static maps.
 Make sure the axis are labelled and are visible clearly.
+FOR ALL IMAGES/PLOTS: Return ONLY raw base64 string - no data URI prefix.
 
 FINAL ANSWER CONVERSION:
 Before assigning to 'answer', always convert numpy/pandas types:
@@ -476,30 +492,35 @@ ERROR PREVENTION:
 - Use help() or basic examples for complex functions
 - If a function fails, try simpler alternatives or default parameters
 
+
 OUTPUT FORMAT:
 - Return ONLY the Python code, no explanations
 - Code should be ready to execute
-- Last line should assign result to variable 'answer'"""
+- Last line should assign result to variable 'answer'
+- For images: assign ONLY the raw base64 string to 'answer'
+-Unless explicitly mentioned in questions.txt, return the final response as a JSON object with the key 'answer'.
+-Make sure the answers (value of keys) to the questions are formatted as per the requirements in the questions.txt file."""
 
     @staticmethod
-    def create_user_prompt(question: str, files_context: str, question_number: int) -> str:
-        return f"""QUESTION #{question_number}:
-{question}
+    def create_user_prompt(questions_content: str, files_context: str) -> str:
+        return f"""QUESTIONS FILE CONTENT:
+{questions_content}
 
 AVAILABLE FILES WITH DETAILED PREVIEWS:
 {files_context}
 
-Generate Python code that answers this question. The code will be executed in a clean environment.
+Generate Python code that processes ALL questions in the questions file and returns the final answer in the EXACT format requested by the questions file.
 
 IMPORTANT:
-- Assign your final answer to a variable called 'answer'
+- Process all questions in sequence
+- Follow the exact output format specified in the questions file (JSON, lists, tables, etc.)
+- Assign your final formatted answer to a variable called 'answer'
 - For images: return base64 string with proper data URI format
-- For data analysis: return the exact format requested (number, string, list, etc.)
 - Handle all possible errors gracefully
 - Use the file paths exactly as provided above
 - For geospatial data: use geopandas, folium, geopy as needed
-- If image/plot size limits are mentioned in the question, implement compression accordingly
-- Use the file preview information to understand data structure and avoid referencing errors
+- If image/plot size limits are mentioned, implement compression accordingly
+- Return the complete response as requested in the questions file
 
 CODE:"""
 
@@ -512,11 +533,11 @@ class GeminiCodeGenerator:
         self.model = genai.GenerativeModel('gemini-2.0-flash')
         self.prompt_engineer = PromptEngineer()
     
-    async def generate_code(self, question: str, files_context: str, question_number: int) -> str:
+    async def generate_code(self, questions_content: str, files_context: str) -> str:
         """Generate Python code using advanced prompting techniques"""
         
         system_prompt = self.prompt_engineer.create_system_prompt()
-        user_prompt = self.prompt_engineer.create_user_prompt(question, files_context, question_number)
+        user_prompt = self.prompt_engineer.create_user_prompt(questions_content, files_context)
         
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
         
@@ -608,7 +629,8 @@ try:
         answer = answer.to_dict()
         
     print("RESULT_START")
-    print(json.dumps(answer))
+    print(answer)  # Print the object directly, not as JSON string
+    
     print("RESULT_END")
     
 except Exception as e:
@@ -803,7 +825,7 @@ class DataAnalystAgent:
         
         result = formatted_response
         for placeholder, base64_data in image_map.items():
-            print(f"🔄 Replacing {placeholder} with image data ({len(base64_data)} chars)")
+            print(f"📄 Replacing {placeholder} with image data ({len(base64_data)} chars)")
             old_result = result
             result = result.replace(placeholder, base64_data)
             replacements = old_result.count(placeholder)
@@ -899,7 +921,7 @@ Give only the formatted response, no explanations or additional text."""
                 for placeholder in all_images.keys():
                     count = formatted_response.count(placeholder)
                     print(f"  {placeholder}: appears {count} times")
-                print(f"🔍 Image map contents:")
+                print(f"📋 Image map contents:")
                 image_data_seen = {}
                 for placeholder, base64_data in all_images.items():
                     short_hash = base64_data[:50] + "..." if len(base64_data) > 50 else base64_data
@@ -978,6 +1000,9 @@ Give only the formatted response, no explanations or additional text."""
     async def process_request(self, questions_content: str, uploaded_files: Dict[str, Path]) -> Dict[str, Any]:
         """Process the complete request and return structured results"""
         
+        # Wake up scraper service (always, regardless of whether we need it)
+        asyncio.create_task(self.scraper_client.wake_up_scraper())
+        
         # Check if URLs exist and if only scraping is needed
         urls = self.url_extractor.extract_urls(questions_content)
         other_files_exist = len(uploaded_files) > 1 or (len(uploaded_files) == 1 and 'questions.txt' not in uploaded_files and 'question.txt' not in uploaded_files)
@@ -987,69 +1012,44 @@ Give only the formatted response, no explanations or additional text."""
             print(f"🔗 Found {len(urls)} URLs, scraping only mode...")
             try:
                 scraper_response = await self.scraper_client.scrape_with_questions(questions_content)
-                print("✅ Scraping completed, formatting response...")
-                
-                # Go directly to format_final_response with scraper response
-                return await self.format_final_response(questions_content, scraper_response)
+                print("✅ Scraping completed, returning response...")
+                return scraper_response
                 
             except Exception as e:
                 print(f"❌ Scraping failed: {e}")
                 return {"error": f"Scraping failed: {str(e)}"}
         
-        # Parse questions
-        questions = self.question_parser.parse_questions(questions_content)
-        
-        if not questions:
-            raise ValueError("No valid questions found in questions.txt")
-        
         # Create enhanced files context with previews
         files_context = await self._create_enhanced_files_context(uploaded_files)
         
-        # Process each question
-        results = []
+        # Process all questions in single prompt
+        print(f"Processing all questions in single prompt...")
         
-        for i, question in enumerate(questions, 1):
-            print(f"Processing question {i}/{len(questions)}: {question[:50]}...")
+        try:
+            # Generate code for all questions
+            print(f"Generating code for all questions...")
+            code = await self.code_generator.generate_code(questions_content, files_context)
+            print(f"Generated code length: {len(code)} characters")
+            print(f"Code preview: {code[:200]}...")
             
-            try:
-                # Generate code
-                print(f"Generating code for question {i}...")
-                code = await self.code_generator.generate_code(
-                            question, files_context, i)
-                print(f"Generated code length: {len(code)} characters")
-                print(f"Code preview: {code[:200]}...")
-                
-                # Execute code
-                work_dir = list(uploaded_files.values())[0].parent if uploaded_files else Path.cwd()
-                result = await self.code_executor.execute_code(code, work_dir)
-                
-                result.question_number = i
-                result.question_text = question
-                
-                # Add debug information
-                if not result.success:
-                    print(f"Question {i} error: {result.error_message}")
-                
-                results.append(result.result)
-                
-                print(f"Question {i} completed: {'✅' if result.success else '❌'}")
-                
-            except Exception as e:
-                print(f"Question {i} failed with exception: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                results.append("could not answer")
-        
-        # Print raw response on backend
-        print("📋 Raw Response:")
-        print(json.dumps(results, indent=2))
-        
-        # Format the final response using LLM
-        print("🎯 Formatting final response...")
-        formatted_answers = await self.format_final_response(questions_content, results)
-        
-        # Return only the formatted answers
-        return formatted_answers
+            # Execute code
+            work_dir = list(uploaded_files.values())[0].parent if uploaded_files else Path.cwd()
+            result = await self.code_executor.execute_code(code, work_dir)
+            
+            if not result.success:
+                print(f"Code execution error: {result.error_message}")
+                return {"error": f"Code execution failed: {result.error_message}"}
+            
+            print(f"All questions completed: ✅")
+            
+            # Return the result directly (no additional formatting needed)
+            return result.result
+            
+        except Exception as e:
+            print(f"Processing failed with exception: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": f"Processing failed: {str(e)}"}
 
     async def _create_enhanced_files_context(self, uploaded_files: Dict[str, Path]) -> str:
         """Create enhanced context string with detailed file previews"""
@@ -1185,7 +1185,7 @@ Give only the formatted response, no explanations or additional text."""
                         context_lines.append(f"   📄 TEXT FILE - Use open() to read content")
                 
                 else:
-                    context_lines.append(f"   📎 GENERIC FILE - Determine processing method based on content")
+                    context_lines.append(f"   🔍 GENERIC FILE - Determine processing method based on content")
                     
             except Exception as e:
                 context_lines.append(f"   ❌ Preview generation failed: {str(e)}")
