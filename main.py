@@ -165,15 +165,15 @@ class FilePreviewGenerator:
         except Exception as e:
             return {"error": str(e)}
 
+
     @staticmethod
-    def preview_image(filepath: Path) -> Dict[str, Any]:
-        """Preview image file"""
+    def preview_image(filepath: Path, questions_content: str = None) -> Dict[str, Any]:
+        """Preview image file with vision LLM analysis"""
         try:
             from PIL import Image
-            import pytesseract
+            import google.generativeai as genai
             
             with Image.open(filepath) as img:
-                # Basic image info
                 info = {
                     "type": "image",
                     "format": img.format,
@@ -182,39 +182,39 @@ class FilePreviewGenerator:
                     "megapixels": round((img.size[0] * img.size[1]) / 1_000_000, 2)
                 }
                 
-                # Try OCR for text extraction (for tables in images)
-                try:
-                    # Convert to RGB if needed
-                    if img.mode != 'RGB':
-                        img_rgb = img.convert('RGB')
-                    else:
-                        img_rgb = img
-                    
-                    # Quick OCR sample
-                    text_sample = pytesseract.image_to_string(img_rgb)[:500]
-                    
-                    if text_sample.strip():
-                        info["has_text"] = True
-                        info["text_sample"] = text_sample.strip()
+                # Vision LLM analysis for all images
+                if questions_content:
+                    try:
+                        vision_model = genai.GenerativeModel('gemini-1.5-pro-vision-latest')
                         
-                        # Check if it might contain tabular data
-                        lines = text_sample.split('\n')
-                        tabular_indicators = sum(1 for line in lines if len(line.split()) > 3)
-                        info["likely_table"] = tabular_indicators > 2
-                    else:
-                        info["has_text"] = False
+                        prompt = f"""Analyze this image in context of these questions:
+
+    {questions_content}
+
+    Provide:
+    1. What data/content is visible in the image
+    2. If tables are present, describe their structure and content
+    3. Suggest specific Python code approaches for extracting the data to answer the questions
+    4. Recommend libraries (PIL, pytesseract, pandas, etc.) and methods
+
+    Be concise but provide actionable coding guidance."""
                         
-                except Exception:
-                    info["ocr_available"] = False
-                    
-                return info
+                        response = vision_model.generate_content([prompt, img])
+                        info["vision_analysis"] = response.text
+                        
+                    except Exception as e:
+                        info["vision_analysis"] = f"Vision analysis failed: {e}"
+                else:
+                    info["vision_analysis"] = "No questions provided for vision analysis"
                 
+                return info
+                    
         except Exception as e:
             return {"error": str(e)}
 
     @staticmethod
-    def preview_pdf(filepath: Path) -> Dict[str, Any]:
-        """Enhanced PDF preview with robust table detection"""
+    def preview_pdf(filepath: Path, questions_content: str = None) -> Dict[str, Any]:
+        """Enhanced PDF preview with robust table detection and vision analysis"""
         try:
             import pdfplumber
             import pandas as pd
@@ -296,7 +296,7 @@ class FilePreviewGenerator:
                 ]
                 has_geospatial = any(indicator.lower() in all_text.lower() for indicator in geo_indicators)
                 
-                return {
+                preview_info = {
                     'type': 'pdf',
                     'pages': page_count,
                     'word_count': word_count,
@@ -310,6 +310,47 @@ class FilePreviewGenerator:
                     'file_size_mb': round(filepath.stat().st_size / 1024 / 1024, 2),
                     'extraction_strategies': len(strategies)
                 }
+                
+                # Vision LLM analysis for PDFs (convert first page to image)
+                if questions_content:
+                    try:
+                        import google.generativeai as genai
+                        page_images = []
+                        for i, page in enumerate(pdf.pages[:30]):
+                            page_image = page.to_image(resolution=150)
+                            page_images.append(page_image.original)
+                        
+                        vision_model = genai.GenerativeModel('gemini-1.5-pro-vision-latest')
+                        
+                        prompt = f"""Analyze this PDF page in context of these questions:
+
+    {questions_content}
+
+    Provide:
+    1. What data/content structure is visible (tables, charts, forms, text)
+    2. If tables are present, describe their layout, headers, and content
+    3. Answer any direct questions that can be determined visually from this page
+    4. For questions requiring data extraction, provide specific Python code snippets using pdfplumber/tabula/camelot
+    5. Recommend best extraction strategies based on the visual layout
+
+    Example code format:
+    ```python
+    # For table extraction
+    tables = page.extract_tables(table_settings={{"vertical_strategy": "lines"}})
+    df = pd.DataFrame(tables[0][1:], columns=tables[0][0])
+    ```
+
+    Be specific - if you can see answers directly, state them. If code is needed, provide working examples."""
+                        
+                        response = vision_model.generate_content([prompt]+page_images)
+                        preview_info["vision_analysis"] = response.text
+                        
+                    except Exception as e:
+                        preview_info["vision_analysis"] = f"Vision analysis failed: {e}"
+                else:
+                    preview_info["vision_analysis"] = "No questions provided for vision analysis"
+                
+                return preview_info
                 
         except Exception as e:
             return {"error": str(e)}
@@ -412,6 +453,7 @@ CRITICAL REQUIREMENTS:
 9. Use absolute file paths provided in the context
 10. ALWAYS convert numpy/pandas types to native Python types before assigning to 'answer'
 11. MAKE SURE 'answer' is strictly a JSON object unless specified otherwise in the questions.txt.
+12. MAKE SURE THAT IF ERROR OCCURS OR TIMEOUT OCCURS ATLEAST PARTIAL RESPONSE IS SENT CORRECTLY.
 
 GEOSPATIAL ANALYSIS:
 - Use geopandas for spatial data manipulation: gpd.read_file(), gpd.GeoDataFrame()
@@ -1028,7 +1070,7 @@ Give only the formatted response, no explanations or additional text."""
                 return {"error": f"Scraping failed: {str(e)}"}
         
         # Create enhanced files context with previews
-        files_context = await self._create_enhanced_files_context(uploaded_files)
+        files_context = await self._create_enhanced_files_context(uploaded_files, questions_content)
         
         # Process all questions in single prompt
         print(f"Processing all questions in single prompt...")
@@ -1059,7 +1101,7 @@ Give only the formatted response, no explanations or additional text."""
             traceback.print_exc()
             return {"error": f"Processing failed: {str(e)}"}
 
-    async def _create_enhanced_files_context(self, uploaded_files: Dict[str, Path]) -> str:
+    async def _create_enhanced_files_context(self, uploaded_files: Dict[str, Path], questions_content: str) -> str:
         """Create enhanced context string with detailed file previews"""
         
         if not uploaded_files:
@@ -1130,7 +1172,7 @@ Give only the formatted response, no explanations or additional text."""
                         context_lines.append(f"   ❌ Preview error: {preview['error']}")
                 
                 elif file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
-                    preview = self.preview_generator.preview_image(filepath)
+                    preview = self.preview_generator.preview_image(filepath, questions_content)
                     if 'error' not in preview:
                         context_lines.append(f"   🖼️ IMAGE DATA:")
                         context_lines.append(f"   ├─ Format: {preview['format']}")
@@ -1150,7 +1192,7 @@ Give only the formatted response, no explanations or additional text."""
                         context_lines.append(f"   ❌ Preview error: {preview['error']}")
                 
                 elif file_ext == '.pdf':
-                    preview = self.preview_generator.preview_pdf(filepath)
+                    preview = self.preview_generator.preview_pdf(filepath,questions_content)
                     if 'error' not in preview:
                         context_lines.append(f"   📄 PDF ANALYSIS:")
                         context_lines.append(f"   ├─ Pages: {preview['pages']}")
@@ -1298,7 +1340,17 @@ async def analyze_data(request: Request):
             # Initialize and run agent
             agent = DataAnalystAgent(api_key)
             results = await agent.process_request(questions_content, uploaded_files)
-            
+            import math
+            def clean_results(obj):
+                if isinstance(obj, float) and math.isnan(obj):
+                    return None
+                elif isinstance(obj, dict):
+                    return {k: clean_results(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [clean_results(x) for x in obj]
+                return obj
+
+            results = clean_results(results)
             return JSONResponse(content=results)
             
         except Exception as e:
