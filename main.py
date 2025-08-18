@@ -510,9 +510,9 @@ JSON/PARQUET PROCESSING:
 - For nested JSON: Use pd.json_normalize() to flatten structures
 
 CRITICAL VISUALIZATION RULE:
-Strictly match ALL plot or image visualization requirements as described in questions, including colors, font_size, axis labels, plot titles, legends, formats, graph types. For geospatial visualizations, use folium for interactive maps or matplotlib/contextily for static maps.
-Make sure the axis are labelled and are visible clearly.
-FOR ALL IMAGES/PLOTS: Return ONLY raw base64 string - no data URI prefix.
+-Strictly match ALL plot or image visualization requirements as described in questions, including colors, font_size, axis labels, plot titles, legends, formats, graph types. For geospatial visualizations, use folium for interactive maps or matplotlib/contextily for static maps.
+-Make sure the axis are labelled and are visible clearly. Do not place the labels slanted or rotated. Also make sure they do not overlap with each other.
+-FOR ALL IMAGES/PLOTS: Return ONLY raw base64 string - no data URI prefix.
 
 FINAL ANSWER CONVERSION:
 Before assigning to 'answer', always convert numpy/pandas types:
